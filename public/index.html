@@ -1,0 +1,157 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>ai-project-radar</title>
+<style>
+  :root {
+    --bg:#0e1116; --panel:#161b22; --line:#2a323d; --txt:#e6edf3; --dim:#8b949e; --faint:#6e7681;
+    --green:#3fb950; --red:#f85149; --amber:#e3b341; --codex:#a98bff; --claude:#58a6ff;
+  }
+  * { box-sizing:border-box; }
+  body { margin:0; background:var(--bg); color:var(--txt);
+    font-family:-apple-system,"PingFang SC","Microsoft YaHei",system-ui,sans-serif; font-size:14px; line-height:1.6; }
+  .wrap { max-width:760px; margin:0 auto; padding:22px 18px 60px; }
+  header { display:flex; align-items:baseline; justify-content:space-between; flex-wrap:wrap; gap:8px; margin-bottom:14px; }
+  h1 { font-size:19px; margin:0; font-weight:600; }
+  .meta { color:var(--faint); font-size:12px; }
+  .card { background:var(--panel); border:1px solid var(--line); border-radius:12px; padding:14px 16px; margin-bottom:11px; }
+  .phead { display:flex; align-items:center; gap:9px; flex-wrap:wrap; margin-bottom:8px; }
+  .pname { font-size:16px; font-weight:600; }
+  .badge { font-size:12px; padding:2px 9px; border-radius:7px; white-space:nowrap; }
+  .b-active { background:rgba(63,185,80,.15); color:var(--green); }
+  .b-paused { background:rgba(139,148,158,.15); color:var(--dim); }
+  .b-blocked { background:rgba(248,81,73,.15); color:var(--red); }
+  .b-stalled { background:rgba(227,179,65,.15); color:var(--amber); }
+  .b-done { background:rgba(139,148,158,.15); color:var(--dim); }
+  .fresh { margin-left:auto; font-size:12px; color:var(--faint); white-space:nowrap; }
+  .fresh.stale { color:var(--red); }
+  .summary { font-size:14px; color:var(--dim); margin-bottom:11px; }
+  .sec { margin-bottom:11px; }
+  .sec-label { font-size:12px; color:var(--faint); margin-bottom:6px; }
+  .who-row, .li { display:flex; align-items:flex-start; gap:8px; font-size:14px; margin-bottom:5px; }
+  .ai-tag { font-size:12px; padding:1px 8px; border-radius:6px; flex-shrink:0; }
+  .ai-codex { border:0.5px solid var(--codex); color:var(--codex); }
+  .ai-claude { border:0.5px solid var(--claude); color:var(--claude); }
+  .decisions { background:rgba(248,81,73,.09); border-radius:8px; padding:9px 12px; margin-bottom:11px; }
+  .dec-head { font-size:13px; font-weight:500; color:var(--red); margin-bottom:6px; }
+  .dec-li { display:flex; gap:7px; font-size:13px; color:var(--red); margin-bottom:4px; }
+  .next-li { display:flex; gap:8px; font-size:14px; color:var(--txt); margin-bottom:5px; }
+  .next-li .box { color:var(--faint); flex-shrink:0; }
+  .foot { font-size:12px; color:var(--faint); border-top:0.5px solid var(--line); padding-top:8px; margin-top:11px; }
+  .warn { font-size:12px; color:var(--amber); }
+  .err { font-size:13px; color:var(--red); }
+  .legend { display:flex; gap:14px; flex-wrap:wrap; font-size:12px; color:var(--faint); margin-top:14px; align-items:center; }
+  .dot { display:inline-block; width:9px; height:9px; border-radius:2px; vertical-align:0; }
+  .empty { color:var(--faint); padding:20px 0; }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header>
+    <h1 id="title">ai-project-radar</h1>
+    <div class="meta"><span style="color:var(--green)">●</span> 每 <span id="rs">30</span>s 刷新 · <span id="updated"></span></div>
+  </header>
+  <div id="app"><div class="empty">加载中…</div></div>
+  <div class="legend">
+    <span><span class="dot" style="border:0.5px solid var(--codex)"></span> codex</span>
+    <span><span class="dot" style="border:0.5px solid var(--claude)"></span> claude</span>
+    <span style="color:var(--red)">● 有待拍板 / 卡住 → 排最前</span>
+    <span style="color:var(--red)">● 超期没动 → 标红</span>
+  </div>
+</div>
+
+<script>
+const $ = (id) => document.getElementById(id);
+function el(t, c, x){ const e=document.createElement(t); if(c)e.className=c; if(x!=null)e.textContent=x; return e; }
+
+const STATUS = { active:{l:'进行中',c:'b-active'}, paused:{l:'暂停',c:'b-paused'}, blocked:{l:'卡住',c:'b-blocked'}, stalled:{l:'停滞',c:'b-stalled'}, done:{l:'完成',c:'b-done'} };
+
+function freshText(p){
+  const g=p.git||{};
+  if(g.gitAge==null) return {t:'没接 git', stale:false};
+  if(g.gitAge<=0) return {t:'今天有提交'+(g.dirty?' · '+g.dirty+' 处改动':''), stale:false};
+  if(g.gitAge===1) return {t:'昨天有提交', stale:p.live==='stalled'};
+  return {t:g.gitAge+' 天没提交', stale:p.live==='stalled'};
+}
+
+function card(p){
+  const c = el('div','card');
+  const head = el('div','phead');
+  head.appendChild(el('span','pname',p.name));
+  const st = STATUS[p.live]||STATUS.active;
+  head.appendChild(el('span','badge '+st.c, st.l));
+  if(p.phase){ const ph=el('span',null,p.phase); ph.style.cssText='font-size:12px;padding:2px 9px;border-radius:7px;background:rgba(139,148,158,.14);color:var(--faint)'; head.appendChild(ph); }
+  const f = freshText(p);
+  const fe = el('span','fresh'+(f.stale?' stale':''));
+  fe.textContent=f.t;
+  head.appendChild(fe);
+  c.appendChild(head);
+
+  if(p.error){ c.appendChild(el('div','err','⚠ '+p.error)); return c; }
+
+  if(p.summary) c.appendChild(el('div','summary',p.summary));
+
+  if(p.who && p.who.length){
+    const sec=el('div','sec');
+    sec.appendChild(el('div','sec-label', p.who.length>1?'谁在做（两个 AI 一起）':'谁在做'));
+    p.who.forEach(w=>{
+      const row=el('div','who-row');
+      row.appendChild(el('span','ai-tag '+(w.ai==='codex'?'ai-codex':'ai-claude'), w.ai));
+      row.appendChild(el('span',null,w.role));
+      sec.appendChild(row);
+    });
+    c.appendChild(sec);
+  }
+
+  if(p.decisions && p.decisions.length){
+    const d=el('div','decisions');
+    d.appendChild(el('div','dec-head','● 等你拍板 · '+p.decisions.length+' 件'));
+    p.decisions.forEach(x=>{ const li=el('div','dec-li'); li.appendChild(el('span',null,'·')); li.appendChild(el('span',null,x)); d.appendChild(li); });
+    c.appendChild(d);
+  }
+
+  if(p.next && p.next.length){
+    const sec=el('div','sec');
+    sec.appendChild(el('div','sec-label','接下来做'));
+    p.next.forEach(x=>{ const li=el('div','next-li'); li.appendChild(el('span','box','☐')); li.appendChild(el('span',null,x)); sec.appendChild(li); });
+    c.appendChild(sec);
+  }
+
+  const foot=el('div','foot');
+  foot.style.display='flex'; foot.style.alignItems='center'; foot.style.gap='8px';
+  let ft = p.source;
+  if(p.missing && p.missing.length) ft += '　⚠ 缺：'+p.missing.join('、');
+  foot.appendChild(el('span', p.missing&&p.missing.length?'warn':null, ft));
+  const relay=el('button',null,'复制接力提示');
+  relay.style.cssText='margin-left:auto; font-size:11px; padding:2px 8px; border-radius:6px; border:0.5px solid var(--line); background:transparent; color:var(--dim); cursor:pointer; white-space:nowrap;';
+  relay.onclick=function(){
+    const txt='接手【'+p.name+'】：进到 '+(p.projPath||'')+'，先读 PLAN（'+(p.planSource||'PLAN.md')+'）了解概要/进展/下一步，按“接下来做”继续、收工更新 PLAN。'+((p.next&&p.next.length)?' 当前下一步：'+p.next.slice(0,2).join('；'):'');
+    if(navigator.clipboard){navigator.clipboard.writeText(txt).then(function(){relay.textContent='已复制 ✓';setTimeout(function(){relay.textContent='复制接力提示';},1500);}).catch(function(){alert(txt);});}else{alert(txt);}
+  };
+  foot.appendChild(relay);
+  c.appendChild(foot);
+  return c;
+}
+
+async function tick(){
+  try{
+    const r=await fetch('/api/state',{cache:'no-store'});
+    const s=await r.json();
+    $('rs').textContent=s.refreshSeconds;
+    $('updated').textContent='更新于 '+new Date(s.generatedAt).toLocaleTimeString('zh-CN');
+    const app=$('app'); app.innerHTML='';
+    if(!s.projects||!s.projects.length){ app.appendChild(el('div','empty','名单里还没有项目（registry/projects.json）')); }
+    else s.projects.forEach(p=>app.appendChild(card(p)));
+    if(window.__t)clearTimeout(window.__t);
+    window.__t=setTimeout(tick,(s.refreshSeconds||30)*1000);
+  }catch(e){
+    $('app').innerHTML='<div class="empty">连不上服务，确认 node server.js 在跑</div>';
+    window.__t=setTimeout(tick,5000);
+  }
+}
+tick();
+</script>
+</body>
+</html>

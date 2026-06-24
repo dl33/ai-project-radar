@@ -1,0 +1,19 @@
+[
+  {
+    "id": "example-in-repo",
+    "name": "示例·自有项目",
+    "path": "/绝对路径/到/你的项目",
+    "mode": "in_repo",
+    "plan_source": "PLAN.md",
+    "stale_days": 7,
+    "note": "自己的 repo，计划放项目根 PLAN.md"
+  },
+  {
+    "id": "example-managed",
+    "name": "示例·代管项目",
+    "path": "/别人的/repo路径",
+    "mode": "tower_managed",
+    "plan_source": "projects/example-managed.md",
+    "note": "不方便写文件的 repo（如别人维护的），账由塔台代管"
+  }
+]
