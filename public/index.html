@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1" />
-<title>ai-project-radar</title>
+<title>AI 工作塔台</title>
 <style>
   :root {
     --bg:#0e1116; --panel:#161b22; --line:#2a323d; --txt:#e6edf3; --dim:#8b949e; --faint:#6e7681;
@@ -45,13 +45,22 @@
   .legend { display:flex; gap:14px; flex-wrap:wrap; font-size:12px; color:var(--faint); margin-top:14px; align-items:center; }
   .dot { display:inline-block; width:9px; height:9px; border-radius:2px; vertical-align:0; }
   .empty { color:var(--faint); padding:20px 0; }
+  .livebox { background:rgba(63,185,80,.08); border:0.5px solid rgba(63,185,80,.3); border-radius:8px; padding:8px 11px; margin-bottom:10px; }
+  .live-row { display:flex; align-items:center; gap:8px; font-size:13px; margin:3px 0; }
+  .live-dot { width:8px; height:8px; border-radius:50%; flex-shrink:0; }
+  .live-dot.on { background:var(--green); box-shadow:0 0 7px var(--green); animation:pulse 1.5s infinite; }
+  .live-dot.mid { background:var(--amber); }
+  .live-dot.off { background:var(--faint); }
+  .live-act { color:var(--dim); overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+  @keyframes pulse { 0%,100%{opacity:1} 50%{opacity:.4} }
+  .dirtybox { background:rgba(227,179,65,.1); border:0.5px solid rgba(227,179,65,.35); border-radius:8px; padding:7px 11px; margin-bottom:10px; font-size:13px; color:var(--amber); }
 </style>
 </head>
 <body>
 <div class="wrap">
   <header>
-    <h1 id="title">ai-project-radar</h1>
-    <div class="meta"><span style="color:var(--green)">●</span> 每 <span id="rs">30</span>s 刷新 · <span id="updated"></span></div>
+    <h1 id="title">AI 工作塔台</h1>
+    <div class="meta">🛰 会话已并入各项目 · 每 <span id="rs">10</span>s 刷新 · <span id="updated"></span></div>
   </header>
   <div id="app"><div class="empty">加载中…</div></div>
   <div class="legend">
@@ -68,11 +77,36 @@ function el(t, c, x){ const e=document.createElement(t); if(c)e.className=c; if(
 
 const STATUS = { active:{l:'进行中',c:'b-active'}, paused:{l:'暂停',c:'b-paused'}, blocked:{l:'卡住',c:'b-blocked'}, stalled:{l:'停滞',c:'b-stalled'}, done:{l:'完成',c:'b-done'} };
 
+function agoShort(s){ if(s<60)return s+' 秒前'; if(s<3600)return Math.floor(s/60)+' 分前'; return Math.floor(s/3600)+' 小时前'; }
+function sessionLabel(ls){ return ls.status==='active'?'正在跑':(ls.status==='recent'?'刚停':agoShort(ls.ageSec)); }
+function sessionBox(sessions){
+  const live=el('div','livebox');
+  sessions.forEach(ls=>{
+    const row=el('div','live-row');
+    const dotc=ls.status==='active'?'on':(ls.status==='recent'?'mid':'off');
+    row.appendChild(el('span','live-dot '+dotc));
+    row.appendChild(el('span','ai-tag '+(ls.ai==='codex'?'ai-codex':'ai-claude'), ls.ai));
+    row.appendChild(el('span','live-act', sessionLabel(ls)+' · '+ls.action));
+    live.appendChild(row);
+  });
+  return live;
+}
+function orphanCard(sessions){
+  const c=el('div','card');
+  const head=el('div','phead');
+  head.appendChild(el('span','pname','未归到项目的会话'));
+  head.appendChild(el('span','badge b-paused','不属于具体项目'));
+  c.appendChild(head);
+  c.appendChild(el('div','summary','在仓库外、或跨项目目录干活的 AI 会话，归不到单个已登记项目'));
+  c.appendChild(sessionBox(sessions));
+  return c;
+}
+
 function freshText(p){
   const g=p.git||{};
   if(g.gitAge==null) return {t:'没接 git', stale:false};
-  if(g.gitAge<=0) return {t:'今天有提交'+(g.dirty?' · '+g.dirty+' 处改动':''), stale:false};
-  if(g.gitAge===1) return {t:'昨天有提交', stale:p.live==='stalled'};
+  if(g.gitAge<=0) return {t:'近一天有提交', stale:false};
+  if(g.gitAge===1) return {t:'1 天前提交', stale:p.live==='stalled'};
   return {t:g.gitAge+' 天没提交', stale:p.live==='stalled'};
 }
 
@@ -88,6 +122,15 @@ function card(p){
   fe.textContent=f.t;
   head.appendChild(fe);
   c.appendChild(head);
+
+  if(p.live_sessions && p.live_sessions.length){
+    c.appendChild(sessionBox(p.live_sessions));
+  }
+
+  const dirty = (p.git && p.git.dirty) || 0;
+  if(dirty > 0){
+    c.appendChild(el('div','dirtybox','🔥 '+dirty+' 处改动还没提交'+(dirty>50?' · 正在大改':'')));
+  }
 
   if(p.error){ c.appendChild(el('div','err','⚠ '+p.error)); return c; }
 
@@ -131,6 +174,17 @@ function card(p){
     if(navigator.clipboard){navigator.clipboard.writeText(txt).then(function(){relay.textContent='已复制 ✓';setTimeout(function(){relay.textContent='复制接力提示';},1500);}).catch(function(){alert(txt);});}else{alert(txt);}
   };
   foot.appendChild(relay);
+  // 「更新进度」：调 AI 读 git 改写这个项目的 PLAN
+  const rfBtn=el('button',null,'🔄 更新进度');
+  rfBtn.style.cssText='font-size:11px; padding:2px 8px; border-radius:6px; border:0.5px solid var(--line); background:transparent; color:var(--dim); cursor:pointer; white-space:nowrap; margin-left:8px;';
+  rfBtn.onclick=function(){
+    rfBtn.textContent='更新中…约1分钟'; rfBtn.disabled=true;
+    fetch('/api/refresh?id='+encodeURIComponent(p.id)).then(function(r){return r.json();}).then(function(res){
+      if(res.ok){ rfBtn.textContent='已更新 ✓'; setTimeout(tick,600); }
+      else { rfBtn.textContent=res.error||'失败'; setTimeout(function(){rfBtn.textContent='🔄 更新进度';rfBtn.disabled=false;},2500); }
+    }).catch(function(){ rfBtn.textContent='失败'; rfBtn.disabled=false; });
+  };
+  foot.appendChild(rfBtn);
   c.appendChild(foot);
   return c;
 }
@@ -143,7 +197,7 @@ async function tick(){
     $('updated').textContent='更新于 '+new Date(s.generatedAt).toLocaleTimeString('zh-CN');
     const app=$('app'); app.innerHTML='';
     if(!s.projects||!s.projects.length){ app.appendChild(el('div','empty','名单里还没有项目（registry/projects.json）')); }
-    else s.projects.forEach(p=>app.appendChild(card(p)));
+    else { s.projects.forEach(p=>app.appendChild(card(p))); if(s.orphanSessions&&s.orphanSessions.length) app.appendChild(orphanCard(s.orphanSessions)); }
     if(window.__t)clearTimeout(window.__t);
     window.__t=setTimeout(tick,(s.refreshSeconds||30)*1000);
   }catch(e){
