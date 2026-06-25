@@ -64,4 +64,5 @@ projects.forEach((p) => {
 out('---');
 out('打开完整看板（项目详情） | href=http://localhost:7777/board');
 out('启动 / 重启服务 | bash="' + path.join(__dirname, '..', 'start.command') + '" terminal=false');
+out('停止服务 | bash="' + path.join(__dirname, '..', 'stop.command') + '" terminal=false');
 out('刷新 | refresh=true');
